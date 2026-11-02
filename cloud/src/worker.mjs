@@ -1,6 +1,8 @@
 import {fresh,interact,due} from './engine.mjs';
 const json=x=>JSON.stringify(x);
 const allowed=env=>new Set(String(env.ALLOWED_USER_IDS||'').split(',').filter(x=>/^\d+$/.test(x.trim())).map(Number));
+const canUse=(env,owner)=>Number.isSafeInteger(owner)&&owner>0&&(env.PUBLIC_ACCESS==='1'||allowed(env).has(owner));
+const admins=env=>new Set(String(env.ADMIN_USER_IDS||'').split(',').filter(x=>/^\d+$/.test(x.trim())).map(Number));
 const stmt=(db,sql,...args)=>db.prepare(sql).bind(...args);
 
 export class Repository {
@@ -33,14 +35,42 @@ export async function telegram(env,method,payload){
 
 export async function processUpdate(env,update,now=Date.now()){
   const cb=update.callback_query,msg=cb?.message||update.message,owner=(cb?.from||msg?.from)?.id;
-  if(!Number.isSafeInteger(update.update_id)||!allowed(env).has(owner)||msg?.chat?.type!=='private'||msg.chat.id!==owner)return null;
+  if(!Number.isSafeInteger(update.update_id)||!canUse(env,owner)||msg?.chat?.type!=='private'||msg.chat.id!==owner)return null;
   const repo=new Repository(env.DB);
-  await repo.change(owner,s=>{if(update.update_id<(s.minUpdate||0)||s.seen.includes(update.update_id))return false;interact(s,update,now);});
+  const command=(msg.text||'').trim().split(/[\s@]/)[0];
+  const statsRequest=['/admin','/stats'].includes(command)||cb?.data==='stats';
+  let statsText='Эта команда недоступна.';
+  // Create this user's row first, so a new admin is counted in their own view.
+  if(statsRequest&&admins(env).has(owner)){
+    await repo.load(owner);
+    const counts=await stmt(env.DB,`SELECT COUNT(*) total,
+      SUM(CASE WHEN json_extract(data,'$.lastSeen')>=? THEN 1 ELSE 0 END) day,
+      SUM(CASE WHEN json_extract(data,'$.lastSeen')>=? THEN 1 ELSE 0 END) week,
+      SUM(CASE WHEN json_extract(data,'$.lastSeen')>=? THEN 1 ELSE 0 END) month FROM owners`,now-86400000,now-604800000,now-2592000000).all();
+    const c=counts.results[0];statsText=`📊 Статистика бота\n\nВсего пользователей: ${c.total}\nАктивны за 24 часа: ${c.day||0}\nЗа 7 дней: ${c.week||0}\nЗа 30 дней: ${c.month||0}\n\nС момента запуска статистики. Тексты чужих заметок не отображаются.`;
+  }
+  await repo.change(owner,s=>{
+    if(update.update_id<(s.minUpdate||0)||s.seen.includes(update.update_id))return false;
+    s.lastSeen=now;s.firstSeen??=now;
+    if(statsRequest){
+      s.seen.push(update.update_id);s.seen=s.seen.slice(-128);
+      if(cb)s.effects.push({id:s.nextEffect++,method:'answerCallbackQuery',payload:{callback_query_id:cb.id}});
+      const payload={text:statsText,reply_markup:{inline_keyboard:[...(admins(env).has(owner)?[[{text:'↻ Обновить',callback_data:'stats'}]]:[]),[{text:'Главное меню',callback_data:'menu'}]]}};
+      if(cb)payload.message_id=cb.message.message_id;
+      s.effects.push({id:s.nextEffect++,method:cb?'editMessageText':'sendMessage',payload});
+    }else{
+      interact(s,update,now);
+      if(admins(env).has(owner))for(const e of s.effects)if(e.payload?.text?.startsWith('📓 Календарь записей')){
+        const rows=e.payload.reply_markup.inline_keyboard;
+        if(!rows.some(r=>r.some(b=>b.callback_data==='stats')))rows.push([{text:'📊 Статистика',callback_data:'stats'}]);
+      }
+    }
+  });
   return owner;
 }
 
 export async function deliver(env,owner,now=Date.now(),api=(m,p)=>telegram(env,m,p)){
-  if(!allowed(env).has(owner))return;
+  if(!canUse(env,owner))return;
   const repo=new Repository(env.DB);
   // Two effects per owner bounds cron SQL/API subrequests on the Free plan.
   for(let i=0;i<2;i++){
@@ -76,7 +106,16 @@ export async function deliver(env,owner,now=Date.now(),api=(m,p)=>telegram(env,m
 
 export async function runSchedule(env,now=Date.now(),api){
   const repo=new Repository(env.DB);
-  for(const owner of allowed(env)){
+  // Work only on owners with due reminders or an outbox. At most two owners per
+  // invocation fit within Workers Free's D1/API subrequest budget. Oldest pending
+  // work is served first; an unusually large simultaneous burst can be delayed.
+  const candidates=await stmt(env.DB,`SELECT o.owner,MIN(COALESCE(json_extract(n.data,'$.alarm'),0)) priority
+    FROM owners o LEFT JOIN calendar_notes n ON n.owner=o.owner
+    WHERE json_array_length(json_extract(o.data,'$.effects'))>0 OR
+      (json_extract(o.data,'$.enabled')=1 AND json_extract(n.data,'$.alarm')<=? AND json_extract(n.data,'$.alarm') IS NOT NULL AND COALESCE(json_extract(n.data,'$.reminded'),0)=0)
+    GROUP BY o.owner ORDER BY priority,o.owner LIMIT 2`,now).all();
+  for(const {owner} of candidates.results){
+    if(!canUse(env,owner))continue;
     await repo.change(owner,s=>{const count=s.effects.length;due(s,now);return s.effects.length===count?false:undefined;});
     await deliver(env,owner,now,api);
   }

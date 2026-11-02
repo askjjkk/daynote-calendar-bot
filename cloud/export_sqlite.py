@@ -29,7 +29,12 @@ def export(root=ROOT):
         commands=[];counts={'owners':0,'notes':0,'groups':0,'attachments':0}
         offsetrow=db.execute("SELECT value FROM meta WHERE key='offset'").fetchone()
         offset=int(offsetrow[0]) if offsetrow else 0
-        for owner in sorted(settings.allowed):
+        owners=set(settings.allowed)
+        if getattr(settings.allowed,'public',False):
+            for table in ('notes','groups','states','usage_stats'):
+                try: owners.update(r[0] for r in db.execute(f'SELECT DISTINCT owner FROM {table}'))
+                except sqlite3.OperationalError: pass
+        for owner in sorted(owners):
             groups=[dict(r) for r in db.execute('SELECT id,name FROM groups WHERE owner=? ORDER BY id',(owner,))]
             notes=[];max_file=0
             for r in db.execute('SELECT * FROM notes WHERE owner=? ORDER BY id',(owner,)):
@@ -45,6 +50,12 @@ def export(root=ROOT):
                    'nextNote':max([n['id'] for n in notes],default=0)+1,
                    'nextGroup':max([g['id'] for g in groups],default=0)+1,
                    'nextFile':max_file+1,'nextEffect':1,'effects':[],'seen':[],'minUpdate':offset}
+            try:
+                usage=db.execute('SELECT first_seen,last_seen FROM usage_stats WHERE owner=?',(owner,)).fetchone()
+                if usage:
+                    state['firstSeen']=int(datetime.fromisoformat(usage['first_seen']).timestamp()*1000)
+                    state['lastSeen']=int(datetime.fromisoformat(usage['last_seen']).timestamp()*1000)
+            except sqlite3.OperationalError: pass
             session=db.execute('SELECT value FROM states WHERE owner=?',(owner,)).fetchone()
             if session:
                 old=json.loads(session[0]);mode={'draft_text':'text','draft_date':'date','draft_time':'time',
