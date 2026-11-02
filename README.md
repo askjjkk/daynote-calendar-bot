@@ -91,11 +91,15 @@ npx wrangler d1 create daynote-calendar-db
 npx wrangler d1 execute daynote-calendar-db --remote --file schema.sql
 npx wrangler secret put BOT_TOKEN
 npx wrangler secret put ALLOWED_USER_IDS
+npx wrangler secret put PUBLIC_ACCESS
+npx wrangler secret put ADMIN_USER_IDS
 npx wrangler secret put WEBHOOK_SECRET
 npx wrangler deploy
 ```
 
 В `WEBHOOK_SECRET` задайте случайную строку из букв, цифр, `_` и `-` длиной не менее 32 символов. Перед переключением сделайте резервную копию и остановите локальный polling. Зарегистрируйте Telegram webhook на `https://<your-worker>.workers.dev/telegram` с таким же `secret_token` и `allowed_updates` из `message` и `callback_query`. Не помещайте токен в публичный URL и не публикуйте команды с его значением.
+
+Для публичного режима задайте `PUBLIC_ACCESS=1`; в `ADMIN_USER_IDS` укажите свой числовой ID для агрегированной статистики. В закрытом режиме используйте `PUBLIC_ACCESS=0` и список `ALLOWED_USER_IDS`.
 
 `GET /health` возвращает только статус сервиса. Webhook проверяет секретный заголовок и список владельцев. Изменения состояния защищены проверкой версии; очередь переживает повторную доставку updates. Напоминания проверяются раз в минуту, поэтому возможна задержка около минуты плюс задержки сети.
 
