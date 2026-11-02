@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS owners (
+  owner INTEGER PRIMARY KEY,
+  revision INTEGER NOT NULL DEFAULT 0,
+  token TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS calendar_notes (
+  owner INTEGER NOT NULL,
+  id INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY(owner,id)
+);

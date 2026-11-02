@@ -1,0 +1,3 @@
+BOT_TOKEN=your_bot_token
+WEBHOOK_SECRET=random_secret_at_least_32_characters
+ALLOWED_USER_IDS=your_numeric_telegram_id,second_numeric_id

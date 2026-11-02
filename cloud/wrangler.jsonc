@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "daynote-calendar",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-11-02",
+  "workers_dev": true,
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "daynote-calendar-db", "database_id": "REPLACE_WITH_YOUR_D1_ID" }],
+  "observability": { "enabled": true, "head_sampling_rate": 0.05 }
+}
