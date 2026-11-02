@@ -8,7 +8,8 @@ import re
 import sys
 import time
 
-from bot_groups import Bot
+from bot_stats import Bot
+from access import AccessPolicy
 from store import Store
 from transport import Telegram, ApiError, drain
 from views import MOSCOW
@@ -22,6 +23,7 @@ class Settings:
     token: str = field(repr=False)
     allowed: set[int]
     db_path: Path
+    admins: set[int] = field(default_factory=set)
 
 
 def load_settings(root=ROOT):
@@ -39,9 +41,14 @@ def load_settings(root=ROOT):
     if not re.fullmatch(r'\d+:[A-Za-z0-9_-]{10,}', token):
         raise ValueError('Добавьте BOT_TOKEN в локальный .env. Не отправляйте токен в чат.')
     raw = value('ALLOWED_USER_IDS')
-    if not re.fullmatch(r'[1-9]\d*(\s*,\s*[1-9]\d*)*', raw):
+    public=value('PUBLIC_ACCESS','0')=='1'
+    if (not public or raw) and not re.fullmatch(r'[1-9]\d*(\s*,\s*[1-9]\d*)*', raw):
         raise ValueError('Укажите ALLOWED_USER_IDS: положительные Telegram ID через запятую.')
-    return Settings(token, {int(x.strip()) for x in raw.split(',')}, root / 'data' / 'calendar.sqlite3')
+    admin_raw=value('ADMIN_USER_IDS')
+    if admin_raw and not re.fullmatch(r'[1-9]\d*(\s*,\s*[1-9]\d*)*',admin_raw):
+        raise ValueError('ADMIN_USER_IDS должен содержать числовые ID через запятую.')
+    return Settings(token, AccessPolicy({int(x.strip()) for x in raw.split(',') if x.strip()},public),
+        root / 'data' / 'calendar.sqlite3',{int(x.strip()) for x in admin_raw.split(',') if x.strip()})
 
 
 class ProcessLock:
@@ -93,7 +100,7 @@ def run(settings, check=False):
         return
     with ProcessLock(ROOT / 'data' / 'bot.lock'):
         store = Store(settings.db_path)
-        bot = Bot(store, settings.allowed)
+        bot = Bot(store, settings.allowed,admins=settings.admins)
         try:
             log.info('Бот работает. Для остановки нажмите Ctrl+C.')
             while True:

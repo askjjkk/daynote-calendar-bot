@@ -180,6 +180,8 @@ class Bot(LegacyBot):
             self.menu(owner)
 
     def queue_reminders(self,now):
+        if getattr(self.allowed,'public',False):
+            self.allowed.update(r[0] for r in self.s.db.execute('SELECT DISTINCT owner FROM notes'))
         original=self.allowed
         self.allowed={owner for owner in original if self.enabled(owner)}
         try: super().queue_reminders(now)
